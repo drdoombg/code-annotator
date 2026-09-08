@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Code Annotator V2 — Humannaire</title>
+<style>
+  :root {
+    --bg:      #0d1117;
+    --panel:   #161b22;
+    --border:  #21262d;
+    --text:    #e6edf3;
+    --muted:   #7d8590;
+    --accent:  #58a6ff;
+
+    /* token colours */
+    --c-tag:      #ff7b72;
+    --c-attr:     #ffa657;
+    --c-value:    #a5d6ff;
+    --c-selector: #d2a8ff;
+    --c-prop:     #79c0ff;
+    --c-csval:    #56d364;
+    --c-keyword:  #ff7b72;
+    --c-func:     #e3b341;
+    --c-string:   #a5d6ff;
+    --c-comment:  #6e7681;
+    --c-number:   #79c0ff;
+    --c-operator: #ff7b72;
+    --c-dom:      #56d364;
+    --c-event:    #d2a8ff;
+    --c-plain:    #e6edf3;
+
+    /* BLOCK palette — translucent */
+    --blk0:  rgba(255,123,114, 0.08);   /* red-ish   → DOCTYPE / html shell */
+    --blk1:  rgba(100,180,255, 0.08);   /* blue      → <head> / meta */
+    --blk2:  rgba(86, 211,100, 0.08);   /* green     → CSS :root vars */
+    --blk3:  rgba(210,168,255, 0.09);   /* purple    → CSS selectors block */
+    --blk4:  rgba(255,166, 87, 0.08);   /* orange    → HTML body structure */
+    --blk5:  rgba(227,179, 65, 0.08);   /* yellow    → JS state / variables */
+    --blk6:  rgba(86, 211,100, 0.09);   /* green2    → JS functions */
+    --blk7:  rgba(255,123,114, 0.09);   /* red2      → JS event handlers */
+    --blk8:  rgba(100,180,255, 0.09);   /* blue2     → JS utility / misc */
+    --blk9:  rgba(210,168,255, 0.08);   /* purple2   → closing tags */
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.5;min-height:100vh;}
+
+  /* ── TOP BAR ── */
+  .topbar{
+    background:var(--panel);border-bottom:1px solid var(--border);
+    padding:11px 20px;display:flex;align-items:center;gap:14px;
+    position:sticky;top:0;z-index:200;flex-wrap:wrap;
+  }
+  .logo{font-size:1rem;font-weight:700;color:var(--accent);letter-spacing:-.02em;}
+  .logo span{color:var(--text);}
+  .upload-btn{background:var(--accent);border:none;border-radius:6px;padding:7px 16px;
+    color:#0d1117;font-weight:600;font-size:.82rem;cursor:pointer;transition:opacity .15s;}
+  .upload-btn:hover{opacity:.85;}
+  #fileInput{display:none;}
+  .file-name{color:var(--muted);font-size:.8rem;}
+  .view-toggle{display:flex;gap:6px;margin-left:auto;}
+  .vtbtn{background:var(--border);border:1px solid var(--muted);border-radius:6px;
+    padding:6px 12px;color:var(--muted);font-size:.78rem;cursor:pointer;transition:all .12s;}
+  .vtbtn.active{background:var(--accent);border-color:var(--accent);color:#0d1117;font-weight:600;}
+
+  /* ── LEGEND ── */
+  .legend{display:flex;gap:10px;flex-wrap:wrap;padding:7px 20px;
+    background:#0d1117;border-bottom:1px solid var(--border);}
+  .leg-item{display:flex;align-items:center;gap:5px;font-size:.72rem;color:var(--muted);}
+  .leg-dot{width:9px;height:9px;border-radius:2px;}
+
+  /* ── WORKSPACE ── */
+  .workspace{display:grid;grid-template-columns:1fr 340px;min-height:calc(100vh - 90px);}
+
+  /* ── CODE PANEL ── */
+  .code-panel{overflow-x:auto;overflow-y:auto;border-right:1px solid var(--border);}
+  .code-table{width:100%;border-collapse:collapse;
+    font-family:'Fira Code','Cascadia Code','Consolas',monospace;font-size:12.5px;}
+  .code-table td{vertical-align:top;padding:0;}
+
+  /* Line-number cell */
+  .ln{color:#3d444d;user-select:none;text-align:right;
+    padding:0 12px 0 18px;min-width:42px;
+    border-right:1px solid var(--border);white-space:nowrap;}
+
+  /* Block label column */
+  .blabel-cell{width:6px;padding:0;}
+
+  /* Code content */
+  .lc{padding:0 10px;white-space:pre;line-height:1.65;}
+
+  /* BLOCK ROWS — background spans full width via tr */
+  .code-table tr.blk-row-0  { background: var(--blk0); }
+  .code-table tr.blk-row-1  { background: var(--blk1); }
+  .code-table tr.blk-row-2  { background: var(--blk2); }
+  .code-table tr.blk-row-3  { background: var(--blk3); }
+  .code-table tr.blk-row-4  { background: var(--blk4); }
+  .code-table tr.blk-row-5  { background: var(--blk5); }
+  .code-table tr.blk-row-6  { background: var(--blk6); }
+  .code-table tr.blk-row-7  { background: var(--blk7); }
+  .code-table tr.blk-row-8  { background: var(--blk8); }
+  .code-table tr.blk-row-9  { background: var(--blk9); }
+
+  /* First line of a block gets a left accent bar */
+  .code-table tr.blk-first td.blabel-cell {
+    border-left: 3px solid transparent;
+  }
+
+  /* block separator line */
+  .code-table tr.blk-first td { border-top: 1px solid rgba(255,255,255,.05); }
+
+  /* Token colours */
+  .tok-tag      { color:var(--c-tag);      }
+  .tok-attr     { color:var(--c-attr);     }
+  .tok-value    { color:var(--c-value);    }
+  .tok-selector { color:var(--c-selector); }
+  .tok-prop     { color:var(--c-prop);     }
+  .tok-csval    { color:var(--c-csval);    }
+  .tok-keyword  { color:var(--c-keyword);  font-weight:600; }
+  .tok-func     { color:var(--c-func);     }
+  .tok-string   { color:var(--c-string);   }
+  .tok-comment  { color:var(--c-comment);  font-style:italic; }
+  .tok-number   { color:var(--c-number);   }
+  .tok-operator { color:var(--c-operator); }
+  .tok-dom      { color:var(--c-dom);      }
+  .tok-event    { color:var(--c-event);    }
+  .tok-punct    { color:#8b949e;           }
+  .tok-plain    { color:var(--c-plain);    }
+
+  /* ── ANNOTATION PANEL ── */
+  .ann-panel{background:var(--panel);overflow-y:auto;padding:14px 14px;}
+  .ann-title{font-size:.68rem;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--muted);margin-bottom:10px;font-weight:600;}
+
+  .ann-block-card{
+    border-radius:8px;padding:12px 14px;margin-bottom:10px;
+    border-left:4px solid #30363d;
+    transition:box-shadow .15s, border-color .15s;
+    cursor:default;
+    background:#0d1117;
+  }
+  .ann-block-card:hover { box-shadow: 0 0 0 1px rgba(88,166,255,.3); }
+  .ann-block-card.active-card { border-color: var(--accent) !important; box-shadow: 0 0 0 1px rgba(88,166,255,.25); }
+
+  .ann-chip{display:inline-block;font-size:.62rem;padding:1px 7px;border-radius:10px;
+    font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px;}
+  .ann-block-title{font-family:monospace;font-size:.9rem;font-weight:700;
+    margin-bottom:5px;color:var(--text);}
+  .ann-block-body{font-size:.77rem;color:#adbac7;line-height:1.6;}
+  .ann-block-body em{color:var(--accent);font-style:normal;font-weight:600;}
+  .ann-block-body ul{margin:6px 0 0 14px;}
+  .ann-block-body li{margin-bottom:2px;}
+  .ann-lines{font-size:.65rem;color:var(--muted);margin-top:6px;}
+
+  /* ── FLOW PANEL ── */
+  .flow-panel{display:none;padding:24px;overflow-y:auto;grid-column:1/-1;}
+  .flow-panel.visible{display:block;}
+  .flow-title{font-size:1rem;font-weight:700;color:var(--accent);margin-bottom:20px;}
+  .flow-svg-wrap{overflow-x:auto;}
+  svg.flowchart{ display:block; }
+  .fc-label{font-family:-apple-system,sans-serif;font-size:9.5px;fill:#7d8590;}
+
+  /* ── EMPTY ── */
+  .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;
+    height:70vh;color:var(--muted);gap:12px;grid-column:1/-1;}
+  .empty-icon{font-size:3rem;}
+  .empty-title{font-size:1.1rem;font-weight:600;color:var(--text);}
+  .empty-sub{font-size:.82rem;text-align:center;max-width:340px;}
+
+  ::-webkit-scrollbar{width:6px;height:6px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px;}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo">Code<span>Annotator</span> <span style="font-size:.7rem;color:var(--muted);font-weight:400;">V2</span></div>
+  <button class="upload-btn" onclick="document.getElementById('fileInput').click()">📂 Upload HTML / JS / CSS</button>
+  <input type="file" id="fileInput" accept=".html,.htm,.js,.css"/>
+  <span class="file-name" id="fileName">No file loaded</span>
+  <div class="view-toggle">
+    <button class="vtbtn active" onclick="switchView('annotated')" id="btn-annotated">📋 Annotated Code</button>
+    <button class="vtbtn" onclick="switchView('flow')" id="btn-flow">🔀 Logic Flow</button>
+  </div>
+</div>
+
+<!-- LEGEND -->
+<div class="legend" id="legend" style="display:none;">
+  <div class="leg-item"><div class="leg-dot" style="background:rgba(255,123,114,.5)"></div>HTML Shell</div>
+  <div class="leg-item"><div class="leg-dot" style="background:rgba(100,180,255,.5)"></div>Head / Meta</div>
+  <div class="leg-item"><div class="leg-dot" style="background:rgba(86,211,100,.5)"></div>CSS Variables</div>
+  <div class="leg-item"><div class="leg-dot" style="background:rgba(210,168,255,.5)"></div>CSS Rules</div>
+  <div class="leg-item"><div class="leg-dot" style="background:rgba(255,166,87,.5)"></div>HTML Body</div>
+  <div class="leg-item"><div class="leg-dot" style="background:rgba(227,179,65,.5)"></div>JS State</div>
+  <div class="leg-item"><div class="leg-dot" style="background:rgba(86,211,100,.5)"></div>JS Functions</div>
+  <div class="leg-item"><div class="leg-dot" style="background:rgba(255,123,114,.5)"></div>JS Events / Handlers</div>
+  <div class="leg-item"><div class="leg-dot" style="background:rgba(100,180,255,.5)"></div>JS Utility</div>
+</div>
+
+<!-- WORKSPACE -->
+<div class="workspace" id="workspace">
+  <div class="empty" id="emptyState">
+    <div class="empty-icon">🧩</div>
+    <div class="empty-title">Upload a code file to annotate</div>
+    <div class="empty-sub">HTML, CSS, or JS — the annotator colour-blocks each semantic region and explains it block by block in the sidebar.</div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════
+//  BLOCK DEFINITIONS — what each palette slot means
+// ══════════════════════════════════════════════
+const BLOCK_PALETTE = [
+  { id:0, color:'rgba(255,123,114,.08)', accent:'#ff7b72', label:'HTML Shell',       emoji:'🏗️' },
+  { id:1, color:'rgba(100,180,255,.08)', accent:'#79c0ff', label:'Head / Meta',       emoji:'📋' },
+  { id:2, color:'rgba(86,211,100,.08)',  accent:'#56d364', label:'CSS Variables',     emoji:'🎨' },
+  { id:3, color:'rgba(210,168,255,.09)', accent:'#d2a8ff', label:'CSS Rules',         emoji:'🖌️' },
+  { id:4, color:'rgba(255,166,87,.08)',  accent:'#ffa657', label:'HTML Body',         emoji:'📄' },
+  { id:5, color:'rgba(227,179,65,.08)',  accent:'#e3b341', label:'JS State & Data',   emoji:'🗂️' },
+  { id:6, color:'rgba(86,211,100,.09)',  accent:'#56d364', label:'JS Functions',      emoji:'⚙️' },
+  { id:7, color:'rgba(255,123,114,.09)', accent:'#ff7b72', label:'JS Event Handlers', emoji:'🔌' },
+  { id:8, color:'rgba(100,180,255,.09)', accent:'#58a6ff', label:'JS Utility',        emoji:'🔧' },
+  { id:9, color:'rgba(210,168,255,.08)', accent:'#d2a8ff', label:'Close / Footer',    emoji:'🔚' },
+];
+
+// ══════════════════════════════════════════════
+//  ANNOTATION LIBRARY
+// ══════════════════════════════════════════════
+const ANN_LIB = {
+  htmlTags:{
+    div:    'A <em>box</em> — groups things together. No visual meaning on its own; CSS gives it shape.',
+    span:   'Stays inline with text. Wraps a word or phrase so you can style just that part.',
+    button: 'Clickable. Usually wired to a JS function via <em>onclick</em> or addEventListener.',
+    input:  'A user input field. The <em>type</em> attribute controls its behaviour: text, range, checkbox…',
+    select: 'Dropdown. Each <em>&lt;option&gt;</em> inside is one selectable choice.',
+    form:   'Wraps inputs. On submit it collects all values and sends them to a handler or URL.',
+    script: 'Everything inside is <em>executed as JavaScript</em> by the browser.',
+    style:  'Everything inside is <em>CSS</em> — controls appearance.',
+    header: 'Top region — typically holds logo, title, nav links.',
+    footer: 'Bottom region — copyright, secondary links.',
+    nav:    'Navigation links. Screen readers use it as a landmark.',
+    section:'Groups related content into a named logical region.',
+    main:   'The unique content of the page — there should only be one.',
+    canvas: 'A blank pixel surface. JS draws on it with the 2D context API.',
+    ul:     'Unordered (bulleted) list. Each item is an <em>&lt;li&gt;</em>.',
+    ol:     'Ordered (numbered) list.',
+    table:  'Data grid: rows (<em>tr</em>), header cells (<em>th</em>), data cells (<em>td</em>).',
+    a:      'Hyperlink. <em>href</em> is the destination. Omit href for anchor-only.',
+    img:    'Embeds an image from <em>src</em>. Always add <em>alt</em> text.',
+    meta:   'Tells the browser (not the user): charset, viewport, description, author.',
+    link:   'Loads an external resource — usually a CSS file. <em>rel</em> describes the relationship.',
+    p:      'A paragraph of text. Browsers add margin above and below by default.',
+    h1:'Largest heading — one per page for SEO.',h2:'Second-level heading.',h3:'Third-level heading.',
+  },
+  attrs:{
+    class:       'CSS class names that style this element. Multiple classes separated by spaces.',
+    id:          'Unique name. CSS targets it with <em>#id</em>, JS with <em>getElementById</em>.',
+    style:       'Inline CSS — overrides everything else. Use sparingly.',
+    href:        'URL the link points to. Can be absolute (<em>https://</em>) or relative (<em>/page</em>).',
+    src:         'Source path for images, scripts, iframes.',
+    type:        'For inputs: <em>text, number, checkbox, range, button</em>… completely changes behaviour.',
+    onclick:     'Runs a JS expression or function when this element is clicked.',
+    placeholder: 'Faint hint text inside an empty input. Disappears when the user types.',
+    disabled:    'Grays out and locks the element — no interaction possible.',
+    value:       'The initial or current value of an input.',
+    charset:     'Character encoding. <em>UTF-8</em> supports every language and emoji.',
+    name:        'Name sent with form data on submit — pairs with value.',
+    rel:         '"stylesheet" = CSS file, "icon" = favicon.',
+    defer:       'Script waits for HTML to fully parse before running.',
+    async:       'Script downloads in parallel and runs as soon as it loads.',
+  },
+  cssProps:{
+    display:           'Layout type. <em>flex</em> = row/column. <em>grid</em> = 2-D. <em>none</em> = invisible + no space.',
+    position:          '<em>static</em>=normal flow. <em>relative</em>=offset from normal. <em>absolute</em>=anchored to parent. <em>fixed</em>=anchored to viewport.',
+    'z-index':         'Stack order. Higher = closer to viewer. Only works on positioned elements.',
+    flex:              'Shorthand for flex-grow/shrink/basis. Makes an item stretchy.',
+    'flex-direction':  '<em>row</em>=horizontal. <em>column</em>=vertical.',
+    'justify-content': 'Distributes space along the main axis. <em>space-between</em>=push items to edges.',
+    'align-items':     'Aligns items on the cross axis. <em>center</em>=vertically centred in a row.',
+    gap:               'Space between flex/grid children. Cleaner than adding margin to every child.',
+    'grid-template-columns': 'Defines column widths. <em>1fr</em>=one share of remaining space.',
+    padding:           'Inner space. Pushes content away from the border — doesn\'t push siblings.',
+    margin:            'Outer space. Pushes neighbouring elements and parent edges away.',
+    'border-radius':   'Rounds corners. <em>50%</em> makes a circle.',
+    'box-shadow':      'Drops a shadow. Format: offset-x offset-y blur spread colour.',
+    transition:        'Smoothly animates property changes. e.g. <em>all .2s ease</em>.',
+    transform:         'Moves, scales, rotates or skews without disturbing layout.',
+    color:             'Text colour. Accepts names, hex, rgb, hsl, CSS variables.',
+    background:        'Shorthand for all background properties — colour, image, gradient.',
+    'font-family':     'Typeface. List fallbacks; end with <em>serif</em> or <em>sans-serif</em> as a safety net.',
+    'font-size':       'Text size. <em>rem</em>=relative to root. <em>em</em>=relative to parent. <em>px</em>=fixed.',
+    'font-weight':     'Thickness. 400=normal, 700=bold. Some fonts support 100–900.',
+    cursor:            'Mouse pointer shape. <em>pointer</em>=hand (clickable). <em>not-allowed</em>=blocked.',
+    opacity:           'Transparency. 1=fully visible, 0=invisible but still takes layout space.',
+    overflow:          'What happens when content overflows its box. <em>hidden</em>=clip. <em>auto</em>=scrollbar.',
+    'white-space':     'Controls line wrapping. <em>nowrap</em>=one line. <em>pre</em>=respect whitespace.',
+    'letter-spacing':  'Space between characters. Positive=wider, negative=tighter.',
+    'line-height':     'Vertical space per line of text. 1.5–1.6 is comfortable for reading.',
+    'text-transform':  '<em>uppercase</em>=ALL CAPS. <em>capitalize</em>=Title Case.',
+    'border':          'Shorthand: width style colour. e.g. <em>1px solid #333</em>.',
+    width:'Element width.',height:'Element height.',
+    'min-width':'Minimum width — element won\'t shrink below this.',
+    'max-width':'Maximum width — element won\'t grow beyond this.',
+    'text-align':'Horizontal text alignment: left, center, right, justify.',
+    'top':'Distance from the top edge (for positioned elements).',
+    'left':'Distance from the left edge (for positioned elements).',
+    'right':'Distance from the right edge.',
+    'bottom':'Distance from the bottom edge.',
+    'content':'Used with ::before / ::after to insert generated text or symbols.',
+    'user-select':'Whether the user can select text. <em>none</em>=prevent selection.',
+  },
+  jsKeywords:{
+    function: 'Defines a named, reusable block of code. Give it inputs (parameters) and a body.',
+    const:    'Declares a variable that <em>cannot be reassigned</em>. Still mutable if it\'s an object/array.',
+    let:      'Declares a variable that <em>can change</em>. Scoped to the current block {}.',
+    var:      'Old-style variable. <em>Function-scoped</em> — leaks out of if/for blocks. Prefer let/const.',
+    return:   'Sends a value back out of a function. Execution stops here.',
+    if:       'Conditional branch — only runs when the condition is <em>truthy</em>.',
+    else:     'Runs when the if condition was <em>false</em>.',
+    for:      'Loop with a counter. Three parts: initialise; condition; step.',
+    while:    'Keeps looping while its condition stays <em>true</em>.',
+    'new':    'Creates an instance of a class or constructor function.',
+    class:    'Blueprint for objects — bundles properties (data) and methods (behaviour).',
+    async:    'Makes a function asynchronous — it always returns a <em>Promise</em>.',
+    await:    'Pauses the async function until a Promise resolves — looks synchronous.',
+    switch:   'Compares a value against multiple <em>case</em> labels. Cleaner than long if-else chains.',
+    true:     'Boolean truthy literal.',false:'Boolean falsy literal.',
+    null:     'Intentional absence of value — you set this on purpose.',
+    undefined:'Variable declared but not yet assigned.',
+    typeof:   'Returns a string naming the type: "string", "number", "object", "function"…',
+    forEach:  'Loops over every item in an array cleanly.',
+    return:'Exits the function and optionally hands a value back to the caller.',
+  },
+  domMethods:{
+    getElementById:   'Finds <em>one</em> element by its id. The fastest DOM lookup.',
+    querySelector:    'Finds the <em>first</em> element matching any CSS selector.',
+    querySelectorAll: 'Returns <em>all</em> matching elements as a NodeList.',
+    addEventListener: 'Listens for an event and runs a function when it fires.',
+    createElement:    'Creates a new element in memory — still need to <em>append</em> it.',
+    appendChild:      'Attaches an element as the <em>last child</em> of another.',
+    innerHTML:        'Gets/sets raw HTML inside an element. Powerful — and dangerous with user input.',
+    textContent:      'Gets/sets plain text inside an element. Safer than innerHTML.',
+    classList:        'The CSS class list. Use <em>.add()</em>, <em>.remove()</em>, <em>.toggle()</em>.',
+    style:            'Direct access to inline CSS. e.g. <em>el.style.display = "none"</em>.',
+    setAttribute:     'Sets any attribute on an element, equivalent to writing it in HTML.',
+    'JSON.parse':     'Converts a JSON string → live JS object.',
+    'JSON.stringify': 'Converts a JS object → JSON string.',
+    'Math.random':    'Returns a random decimal 0 ≤ x < 1.',
+    fetch:            'Makes an HTTP request. Returns a Promise.',
+    setTimeout:       'Runs a function once after a delay (ms).',
+    setInterval:      'Runs a function repeatedly at a fixed interval.',
+    'console.log':    'Prints to the browser\'s developer tools console.',
+    forEach:          'Loops over every item in an array.',
+    filter:           'Returns a <em>new array</em> with only items passing the test.',
+    map:              'Returns a <em>new array</em> with each item transformed.',
+    sort:             'Sorts an array in place. Pass a comparator for custom order.',
+    push:             'Adds one or more items to the <em>end</em> of an array.',
+    includes:         'Returns true if the array/string contains the value.',
+    indexOf:          'Returns the position of the value, or -1 if not found.',
+    parseInt:         'Converts a string to an integer.',
+    document:         'Entry point to the entire HTML page from JS.',
+    window:           'The global browser environment — contains document, setTimeout, etc.',
+    alert:            'Shows a blocking popup dialog with a message.',
+    confirm:          'Shows a yes/no dialog — returns true or false.',
+    split:            'Breaks a string into an array at a separator character.',
+    join:             'Merges an array into a single string with a separator.',
+    replace:          'Replaces part of a string with another.',
+    trim:             'Removes whitespace from both ends of a string.',
+  },
+};
+
+// ══════════════════════════════════════════════
+//  BLOCK SEGMENTER — splits raw code into semantic blocks
+// ══════════════════════════════════════════════
+function segmentCode(raw, type) {
+  const lines = raw.split('\n');
+  const blocks = [];   // [{ paletteId, startLine, endLine, label, annotation, lines:[...] }]
+
+  if (type === 'html') {
+    let mode = 'html';      // html | css | js
+    let cssDepth = 0;
+    let jsDepth  = 0;
+    let inRoot   = false;
+
+    // Rough pass: assign each line to a semantic block
+    let current = null;
+    const flush = () => { if (current) { blocks.push(current); current = null; } };
+    const newBlock = (id, label) => {
+      flush();
+      current = { paletteId: id, label, startLine: null, endLine: null, linesData: [] };
+    };
+
+    lines.forEach((line, i) => {
+      const lno = i + 1;
+      const lt  = line.trim().toLowerCase();
+      const l   = line.trim();
+
+      // Detect mode switches
+      if (mode === 'html') {
+        if (lt.startsWith('<style')) { mode = 'css'; cssDepth = 0; }
+        else if (lt.startsWith('<script')) { mode = 'js'; jsDepth = 0; }
+      } else if (mode === 'css') {
+        if (lt.startsWith('</style')) mode = 'html';
+      } else if (mode === 'js') {
+        if (lt.startsWith('</script')) mode = 'html';
+      }
+
+      // Decide palette bucket for this line
+      let targetId;
+      let targetLabel;
+
+      if (mode === 'html') {
+        if (lt === '<!doctype html>' || lt === '<html' || lt.startsWith('<html ') || lt === '<html lang') {
+          targetId = 0; targetLabel = 'HTML Shell';
+        } else if (lt.startsWith('<head') || lt === '</head>') {
+          targetId = 1; targetLabel = 'Head / Meta';
+        } else if (lt.startsWith('<body') || lt.startsWith('</body') || lt.startsWith('</html')) {
+          targetId = 9; targetLabel = 'Close / Footer';
+        } else if (lt.startsWith('<style') || lt.startsWith('</style')) {
+          // style tag itself goes with CSS block
+          targetId = 3; targetLabel = 'CSS Rules';
+        } else if (lt.startsWith('<script') || lt.startsWith('</script')) {
+          targetId = 6; targetLabel = 'JS Functions';
+        } else if (current) {
+          // inside head
+          targetId = 1; targetLabel = 'Head / Meta';
+        } else {
+          targetId = 4; targetLabel = 'HTML Body';
+        }
+      } else if (mode === 'css') {
+        if (lt.startsWith(':root') || lt.startsWith('--') || inRoot) {
+          if (lt === ':root {' || lt === ':root{') inRoot = true;
+          if (inRoot && lt === '}') inRoot = false;
+          targetId = 2; targetLabel = 'CSS Variables (:root)';
+        } else {
+          targetId = 3; targetLabel = 'CSS Rules';
+        }
+      } else { // js
+        // Classify JS lines
+        const hasFunction = /\bfunction\b/.test(line) || /\b(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:\(|function)/.test(line);
+        const hasEventListener = /addEventListener|\.on\w+\s*=/.test(line);
+        const isStateDecl = /^(?:let|const|var)\s+\w+/.test(l) && !hasFunction;
+        const isUtil = /^(?:function\s+escHtml|function\s+esc|\/\/ ?═)/.test(l);
+
+        if (hasFunction || (current && current.paletteId === 6 && !hasEventListener)) {
+          targetId = 6; targetLabel = 'JS Functions';
+        } else if (hasEventListener) {
+          targetId = 7; targetLabel = 'JS Event Handlers';
+        } else if (isStateDecl) {
+          targetId = 5; targetLabel = 'JS State & Data';
+        } else {
+          targetId = current ? current.paletteId : 5;
+          targetLabel = current ? current.label : 'JS State & Data';
+        }
+      }
+
+      // Check if we need to start a new block
+      if (!current || current.paletteId !== targetId) {
+        flush();
+        current = { paletteId: targetId, label: targetLabel, startLine: lno, endLine: lno, linesData: [] };
+      }
+      current.endLine = lno;
+      if (current.startLine === null) current.startLine = lno;
+      current.linesData.push({ lno, raw: line, mode: mode === 'html' ? (lt.startsWith('<style') ? 'css' : (lt.startsWith('<script') ? 'js' : 'html')) : mode });
+    });
+    flush();
+
+  } else if (type === 'css') {
+    // Whole file CSS — split into :root block + rules block
+    let inRoot = false;
+    let current = null;
+    const flush = () => { if (current) blocks.push(current); current = null; };
+    const newBlock = (id, label, lno) => { flush(); current = { paletteId: id, label, startLine: lno, endLine: lno, linesData: [] }; };
+
+    lines.forEach((line, i) => {
+      const lno = i + 1;
+      const lt = line.trim().toLowerCase();
+      if (lt === ':root {' || lt === ':root{') { inRoot = true; newBlock(2,'CSS Variables',lno); }
+      else if (inRoot && lt === '}') { inRoot = false; }
+      else if (!current) newBlock(3,'CSS Rules',lno);
+      current.endLine = lno;
+      current.linesData.push({ lno, raw: line, mode: 'css' });
+    });
+    flush();
+
+  } else {
+    // Pure JS
+    lines.forEach((line, i) => {
+      const lno = i + 1;
+      const l = line.trim();
+      const hasFunction = /\bfunction\b/.test(line) || /\b(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:\(|function)/.test(line);
+      const hasEventListener = /addEventListener/.test(line);
+      const isStateDecl = /^(?:let|const|var)\s+\w+/.test(l) && !hasFunction;
+      let pid = hasEventListener ? 7 : hasFunction ? 6 : isStateDecl ? 5 : 8;
+      let lbl = ['JS State & Data','JS Functions','JS Event Handlers','JS Utility'][pid===7?2:pid===6?1:pid===5?0:3];
+      const last = blocks[blocks.length-1];
+      if (!last || last.paletteId !== pid) {
+        blocks.push({ paletteId: pid, label: lbl, startLine: lno, endLine: lno, linesData: [] });
+      }
+      const cur = blocks[blocks.length-1];
+      cur.endLine = lno;
+      cur.linesData.push({ lno, raw: line, mode: 'js' });
+    });
+  }
+
+  // Post-process: generate annotations for each block
+  blocks.forEach(blk => buildBlockAnnotation(blk));
+  return blocks;
+}
+
+// ══════════════════════════════════════════════
+//  BUILD BLOCK ANNOTATION
+// ══════════════════════════════════════════════
+function buildBlockAnnotation(blk) {
+  const raw = blk.linesData.map(l => l.raw).join('\n');
+  const lt  = raw.toLowerCase();
+  let items = [];
+
+  if (blk.paletteId === 0) {
+    items = [
+      '🏗️ This is the <em>outermost wrapper</em> of the document.',
+      'The <em>&lt;!DOCTYPE html&gt;</em> declaration tells the browser "this is modern HTML5 — use standard mode."',
+      'The <em>lang</em> attribute on &lt;html&gt; tells screen readers and search engines what language the page is in.',
+    ];
+  } else if (blk.paletteId === 1) {
+    const tags = [];
+    if (lt.includes('<meta')) tags.push('<em>&lt;meta&gt;</em> tags give the browser instructions invisible to the user — charset, viewport width, page description');
+    if (lt.includes('<title')) tags.push('<em>&lt;title&gt;</em> sets the browser tab text and the Google search result headline');
+    if (lt.includes('<link')) tags.push('<em>&lt;link&gt;</em> pulls in external resources — usually CSS stylesheets');
+    if (lt.includes('charset')) tags.push('<em>charset="UTF-8"</em> means every language and emoji is supported');
+    if (lt.includes('viewport')) tags.push('<em>viewport</em> meta makes the page adapt to mobile screen widths');
+    if (!tags.length) tags.push('The &lt;head&gt; is invisible to users but vital for the browser and search engines.');
+    items = tags;
+  } else if (blk.paletteId === 2) {
+    items = [
+      '🎨 CSS <em>custom properties</em> (also called CSS variables) are defined here under <em>:root</em> — the whole document scope.',
+      'Each line follows the pattern <em>--name: value;</em> — the double dash is what makes it a variable.',
+      'Any CSS rule below can use these with <em>var(--name)</em>, so changing one value here updates every element that uses it.',
+      'This is a design system in miniature — colour palette, spacing scale, and semantic names all in one place.',
+    ];
+    // extract variable names
+    const vars = (raw.match(/--[\w-]+/g) || []).slice(0,8);
+    if (vars.length) items.push(`Variables declared here: <em>${vars.join(', ')}</em>`);
+  } else if (blk.paletteId === 3) {
+    // CSS rules block
+    const selectors = (raw.match(/^[ \t]*\.[\w-]+|^[ \t]*#[\w-]+|^[ \t]*[a-z][\w-]*/gm) || [])
+      .map(s => s.trim()).filter(s => s && !s.startsWith('--') && !s.startsWith('/*')).slice(0,6);
+    items = [
+      '🖌️ This block contains CSS <em>rule sets</em> — each targets specific elements and defines how they look.',
+      'Format: <em>selector { property: value; }</em>',
+      selectors.length ? `Selectors in this block: <em>${selectors.join(', ')}</em>` : '',
+    ].filter(Boolean);
+    // pick some notable properties
+    const notable = Object.keys(ANN_LIB.cssProps).filter(p => lt.includes(p+':'));
+    if (notable.length) items.push(`Notable properties: <em>${notable.slice(0,5).join(', ')}</em>`);
+  } else if (blk.paletteId === 4) {
+    // HTML body
+    const tags = (raw.match(/<(\w+)/g)||[]).map(t=>t.slice(1)).filter((v,i,a)=>a.indexOf(v)===i).slice(0,7);
+    items = [
+      '📄 This is the <em>visible HTML</em> — everything here appears on screen.',
+      tags.length ? `Elements used: <em>&lt;${tags.join('&gt;, &lt;')}&gt;</em>` : '',
+    ].filter(Boolean);
+    if (lt.includes('class=')) items.push('Elements have <em>class</em> attributes that connect them to the CSS rules above.');
+    if (lt.includes('onclick') || lt.includes('id=')) items.push('<em>id</em> and <em>onclick</em> attributes let the JavaScript below target and control these elements.');
+  } else if (blk.paletteId === 5) {
+    // JS State
+    const vars = (raw.match(/(?:let|const|var)\s+([a-zA-Z_$][\w$]*)/g)||[]).map(m=>m.split(/\s+/)[1]).slice(0,8);
+    items = [
+      '🗂️ This is the <em>state layer</em> — variables that track what the application knows and remembers.',
+      vars.length ? `Variables declared: <em>${vars.join(', ')}</em>` : '',
+      'These values change as the user interacts — they are the app\'s <em>memory</em>.',
+    ].filter(Boolean);
+    if (lt.includes('set')) items.push('A <em>Set</em> is like an array but every item is unique — no duplicates ever.');
+    if (lt.includes('[]')) items.push('Empty arrays <em>[]</em> are initialised here and filled later as data arrives.');
+    if (lt.includes('false') || lt.includes('true')) items.push('Boolean flags track on/off states: answered, visible, active…');
+  } else if (blk.paletteId === 6) {
+    // JS Functions
+    const fnames = (raw.match(/function\s+([a-zA-Z_$][\w$]*)/g)||[]).map(m=>m.split(/\s+/)[1]);
+    const arrowFns = (raw.match(/(?:const|let)\s+([a-zA-Z_$][\w$]*)\s*=/g)||[]).map(m=>m.split(/\s+/)[1]);
+    const allFns = [...new Set([...fnames,...arrowFns])].slice(0,6);
+    items = [
+      '⚙️ This block defines <em>functions</em> — named reusable chunks of logic.',
+      allFns.length ? `Functions: <em>${allFns.join(', ')}</em>` : '',
+      'Each function is a <em>recipe</em>: call it by name and it executes its steps.',
+    ].filter(Boolean);
+    if (lt.includes('document.getelementbyid') || lt.includes('queryselector')) items.push('Functions here reach into the <em>DOM</em> — finding and updating HTML elements on screen.');
+    if (lt.includes('.style.display')) items.push('<em>.style.display</em> switches elements visible/hidden by toggling CSS values in JS.');
+    if (lt.includes('foreach') || lt.includes('for (') || lt.includes('for(')) items.push('Loops iterate over lists of data to build or update multiple elements at once.');
+  } else if (blk.paletteId === 7) {
+    // JS Event Handlers
+    items = [
+      '🔌 Event handlers make the app <em>respond to user actions</em>.',
+      '<em>addEventListener</em> listens for events like clicks, key presses, form submissions, or mouse moves.',
+      'Each handler calls a function from the block above — keeping logic and wiring separate.',
+    ];
+    const events = (raw.match(/'(click|input|change|submit|keydown|keyup|load|scroll|focus|blur|mouseover|mouseout|resize)'/g)||[]).map(e=>e.replace(/'/g,''));
+    if (events.length) items.push(`Events wired up: <em>${[...new Set(events)].join(', ')}</em>`);
+  } else if (blk.paletteId === 8) {
+    items = [
+      '🔧 Utility code — helper functions and setup that supports the main logic.',
+      'These are small, generic tools: string escaping, formatting, conversions.',
+    ];
+    if (lt.includes('json.parse') || lt.includes('json.stringify')) items.push('<em>JSON</em> methods convert between raw string data and live JavaScript objects.');
+  } else if (blk.paletteId === 9) {
+    items = [
+      '🔚 Closing tags — these close the HTML skeleton opened at the top.',
+      '<em>&lt;/body&gt;</em> ends the visible content. <em>&lt;/html&gt;</em> ends the document.',
+      'Everything must be properly nested and closed for the browser to render correctly.',
+    ];
+  }
+
+  blk.annotation = { items };
+}
+
+// ══════════════════════════════════════════════
+//  TOKENISER (line-level syntax colouring)
+// ══════════════════════════════════════════════
+const JS_KEYWORDS = new Set(['function','const','let','var','return','if','else','for','while',
+  'do','switch','case','break','continue','new','class','extends','super','import','export',
+  'default','async','await','try','catch','finally','throw','typeof','instanceof','in','of',
+  'true','false','null','undefined','this','delete','void']);
+const DOM_METHODS = new Set(['getElementById','getElementsByClassName','getElementsByTagName',
+  'querySelector','querySelectorAll','createElement','appendChild','removeChild','insertBefore',
+  'setAttribute','getAttribute','addEventListener','removeEventListener','classList','innerHTML',
+  'textContent','style','dataset','closest','matches','append','prepend','remove','replaceWith',
+  'dispatchEvent','focus','blur','click','submit','reset','forEach','map','filter','reduce',
+  'indexOf','includes','push','pop','shift','unshift','splice','slice','sort','join','split',
+  'trim','replace','parseInt','parseFloat','JSON','JSON.parse','JSON.stringify','Math',
+  'Math.random','Math.round','Math.floor','Math.ceil','Math.min','Math.max','console',
+  'console.log','setTimeout','setInterval','clearTimeout','clearInterval','fetch','Promise',
+  'document','window','localStorage','sessionStorage','alert','confirm','prompt']);
+const JS_EVENTS = new Set(['click','dblclick','mousedown','mouseup','mouseover','mouseout',
+  'mousemove','keydown','keyup','keypress','input','change','submit','reset','focus','blur',
+  'load','unload','resize','scroll','touchstart','touchend','touchmove','contextmenu','wheel']);
+
+function tokeniseLine(line, mode) {
+  if (mode === 'css') return tokeniseCSS(line);
+  if (mode === 'js')  return tokeniseJS(line);
+  return tokeniseHTML(line);
+}
+
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function tokeniseHTML(line) {
+  let out='', i=0;
+  while(i<line.length){
+    if(line[i]==='<'){
+      if(line.slice(i,i+4)==='<!--'){
+        const end=line.indexOf('-->',i);
+        const chunk=end===-1?line.slice(i):line.slice(i,end+3);
+        out+=`<span class="tok-comment">${esc(chunk)}</span>`; i+=chunk.length; continue;
+      }
+      const cs=line[i+1]==='/'; let j=i+1+(cs?1:0), tn='';
+      while(j<line.length&&/[a-zA-Z0-9\-]/.test(line[j])) tn+=line[j++];
+      if(tn){
+        out+=`<span class="tok-tag">&lt;${cs?'/':''}</span><span class="tok-tag">${esc(tn)}</span>`; i=j;
+        while(i<line.length&&line[i]!=='>'){
+          if(line[i]==='/'){ out+=`<span class="tok-tag">/</span>`; i++; continue; }
+          if(/\s/.test(line[i])){ out+=line[i]; i++; continue; }
+          let an='';
+          while(i<line.length&&/[a-zA-Z0-9\-:\.]/.test(line[i])) an+=line[i++];
+          if(an) out+=`<span class="tok-attr">${esc(an)}</span>`;
+          if(line[i]==='='){ out+=`<span class="tok-punct">=</span>`; i++;
+            if(line[i]==='"'||line[i]==="'"){
+              const q=line[i]; let v=q; i++;
+              while(i<line.length&&line[i]!==q) v+=line[i++];
+              v+=line[i]||q; i++;
+              out+=`<span class="tok-value">${esc(v)}</span>`;
+            }
+          }
+        }
+        if(i<line.length&&line[i]==='>'){ out+=`<span class="tok-tag">&gt;</span>`; i++; }
+      } else { out+=esc(line[i]); i++; }
+    } else { out+=esc(line[i]); i++; }
+  }
+  return out;
+}
+
+function tokeniseCSS(line) {
+  const t=line.trim();
+  if(t.startsWith('/*')) return `<span class="tok-comment">${esc(line)}</span>`;
+  if(t.startsWith('@')||(line.includes('{')&&!line.includes(':'))) return `<span class="tok-selector">${esc(line)}</span>`;
+  if(t.startsWith('--')||t.startsWith(':root')){
+    const c=line.indexOf(':');
+    if(c!==-1) return `<span class="tok-prop">${esc(line.slice(0,c))}</span><span class="tok-punct">:</span><span class="tok-csval">${esc(line.slice(c+1))}</span>`;
+  }
+  const c=line.indexOf(':');
+  if(c!==-1&&!t.startsWith('//')){
+    return `<span class="tok-prop">${esc(line.slice(0,c))}</span><span class="tok-punct">:</span><span class="tok-csval">${esc(line.slice(c+1))}</span>`;
+  }
+  return `<span class="tok-plain">${esc(line)}</span>`;
+}
+
+function tokeniseJS(line) {
+  const t=line.trim();
+  if(t.startsWith('//')) return `<span class="tok-comment">${esc(line)}</span>`;
+  let out='', i=0;
+  while(i<line.length){
+    const ch=line[i];
+    if(ch==='"'||ch==="'"||ch==='`'){
+      let s=ch; i++;
+      while(i<line.length){
+        if(line[i]==='\\'){s+=line[i]+(line[i+1]||'');i+=2;continue;}
+        if(line[i]===ch){s+=line[i++];break;} s+=line[i++];
+      }
+      out+=`<span class="tok-string">${esc(s)}</span>`; continue;
+    }
+    if(/[0-9]/.test(ch)&&(i===0||!/[a-zA-Z_$]/.test(line[i-1]))){
+      let n=''; while(i<line.length&&/[0-9\.]/.test(line[i])) n+=line[i++];
+      out+=`<span class="tok-number">${esc(n)}</span>`; continue;
+    }
+    if(/[a-zA-Z_$]/.test(ch)){
+      let w=''; while(i<line.length&&/[a-zA-Z0-9_$\.]/.test(line[i])) w+=line[i++];
+      const isKw=JS_KEYWORDS.has(w), isDom=DOM_METHODS.has(w)||DOM_METHODS.has(w.split('.').pop());
+      const isEv=JS_EVENTS.has(w), isCall=line[i]==='(';
+      if(isKw) out+=`<span class="tok-keyword">${esc(w)}</span>`;
+      else if(isDom) out+=`<span class="tok-dom">${esc(w)}</span>`;
+      else if(isEv) out+=`<span class="tok-event">${esc(w)}</span>`;
+      else if(isCall) out+=`<span class="tok-func">${esc(w)}</span>`;
+      else out+=`<span class="tok-plain">${esc(w)}</span>`;
+      continue;
+    }
+    if(/[+\-*\/%=<>!&|^~?:]/.test(ch)){ out+=`<span class="tok-operator">${esc(ch)}</span>`; i++; continue; }
+    if(/[(){}\[\];,.]/.test(ch)){ out+=`<span class="tok-punct">${esc(ch)}</span>`; i++; continue; }
+    out+=esc(ch); i++;
+  }
+  return out;
+}
+
+// ══════════════════════════════════════════════
+//  FUNCTION EXTRACTOR (for flow chart)
+// ══════════════════════════════════════════════
+function extractFunctions(raw){
+  const fns=[];
+  const pats=[/function\s+([a-zA-Z_$][\w$]*)\s*\(/g,/(?:const|let|var)\s+([a-zA-Z_$][\w$]*)\s*=\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>|\w+\s*=>)/g];
+  pats.forEach(pat=>{
+    let m; while((m=pat.exec(raw))!==null){
+      const name=m[1]; if(!name||fns.find(f=>f.name===name)) continue;
+      let bs=raw.indexOf('{',m.index+m[0].length), depth=0, pos=bs, body='';
+      while(pos<raw.length){
+        if(raw[pos]==='{') depth++;
+        if(raw[pos]==='}'){depth--;if(depth===0){body=raw.slice(bs,pos+1);break;}} pos++;
+      }
+      const calls=[...new Set((body.match(/([a-zA-Z_$][\w$]*)\s*\(/g)||[]).map(c=>c.split('(')[0]).filter(n=>n!==name&&!JS_KEYWORDS.has(n)))];
+      fns.push({name,calls,body:body.slice(0,300),annotation:inferAnn(name,body)});
+    }
+  });
+  return fns;
+}
+function inferAnn(name,body){
+  const b=body.toLowerCase(), parts=[];
+  if(b.includes('display')&&b.includes('none')) parts.push('hides an element');
+  if(b.includes('display')&&b.includes('block')) parts.push('shows an element');
+  if(b.includes('appendchild')||b.includes('innerhtml')) parts.push('modifies the DOM');
+  if(b.includes('addeventlistener')) parts.push('wires up events');
+  if(b.includes('fetch')) parts.push('makes a network request');
+  if(b.includes('setinterval')||b.includes('settimeout')) parts.push('uses a timer');
+  if(b.includes('json.parse')||b.includes('json.stringify')) parts.push('handles JSON');
+  if(b.includes('sort(')) parts.push('sorts data');
+  if(b.includes('filter(')) parts.push('filters an array');
+  if(b.includes('map(')) parts.push('transforms an array');
+  if(b.includes('math.random')) parts.push('uses randomness');
+  if(b.includes('if(')) parts.push('makes a decision');
+  if(b.includes('for(')) parts.push('loops over items');
+  if(b.includes('return')) parts.push('returns a value');
+  if(!parts.length) parts.push('runs custom logic');
+  return `<em>${name}()</em> — ${parts.join(', ')}.`;
+}
+
+// ══════════════════════════════════════════════
+//  RENDER
+// ══════════════════════════════════════════════
+let globalBlocks = [];
+let globalFns    = [];
+
+document.getElementById('fileInput').addEventListener('change',function(e){
+  const file=e.target.files[0]; if(!file) return;
+  document.getElementById('fileName').textContent=file.name;
+  const type=file.name.split('.').pop().toLowerCase();
+  const reader=new FileReader();
+  reader.onload=ev=>{ processCode(ev.target.result, type); };
+  reader.readAsText(file);
+});
+
+function processCode(raw, type){
+  document.getElementById('emptyState')?.remove();
+  document.getElementById('legend').style.display='flex';
+  globalBlocks = segmentCode(raw, type);
+  globalFns    = extractFunctions(raw);
+  renderAnnotated();
+}
+
+function renderAnnotated(){
+  const ws=document.getElementById('workspace');
+  ws.innerHTML='';
+  ws.style.gridTemplateColumns='1fr 340px';
+
+  const cp=document.createElement('div'); cp.className='code-panel'; cp.id='codePanel';
+  const ap=document.createElement('div'); ap.className='ann-panel';  ap.id='annPanel';
+  const fp=document.createElement('div'); fp.className='flow-panel'; fp.id='flowPanel';
+
+  ws.appendChild(cp); ws.appendChild(ap); ws.appendChild(fp);
+
+  const table=document.createElement('table'); table.className='code-table';
+  cp.appendChild(table);
+
+  ap.innerHTML='<div class="ann-title">📝 Block Annotations</div>';
+
+  globalBlocks.forEach((blk, bi)=>{
+    const pal = BLOCK_PALETTE[blk.paletteId];
+
+    // Annotation card
+    const card=document.createElement('div');
+    card.className='ann-block-card';
+    card.id=`ann-blk-${bi}`;
+    card.style.borderLeftColor = pal.accent;
+    card.style.setProperty('--card-bg', pal.color);
+    card.style.background = pal.color;
+
+    const chipBg = pal.accent+'22';
+    card.innerHTML=`
+      <div class="ann-chip" style="background:${chipBg};color:${pal.accent}">${pal.emoji} ${pal.label}</div>
+      <div class="ann-block-title">${esc(blk.label)}</div>
+      <div class="ann-block-body"><ul>${blk.annotation.items.map(it=>`<li>${it}</li>`).join('')}</ul></div>
+      <div class="ann-lines">Lines ${blk.startLine}–${blk.endLine}</div>
+    `;
+    card.onclick=()=>scrollToBlock(bi);
+    ap.appendChild(card);
+
+    // Code rows
+    blk.linesData.forEach((ld, li)=>{
+      const tr=document.createElement('tr');
+      tr.className=`blk-row-${blk.paletteId}${li===0?' blk-first':''}`;
+      tr.dataset.block=bi;
+
+      const lineHtml=tokeniseLine(ld.raw, ld.mode);
+      tr.innerHTML=`<td class="ln">${ld.lno}</td><td class="blabel-cell"></td><td class="lc">${lineHtml}</td>`;
+
+      // hover syncs card
+      tr.addEventListener('mouseenter',()=>activateCard(bi));
+      table.appendChild(tr);
+    });
+  });
+
+  buildFlowchart(fp, globalFns);
+}
+
+function activateCard(bi){
+  document.querySelectorAll('.ann-block-card').forEach(c=>c.classList.remove('active-card'));
+  const card=document.getElementById(`ann-blk-${bi}`);
+  if(card){ card.classList.add('active-card'); card.scrollIntoView({block:'nearest',behavior:'smooth'}); }
+}
+
+function scrollToBlock(bi){
+  const firstRow=document.querySelector(`tr[data-block="${bi}"]`);
+  if(firstRow) firstRow.scrollIntoView({block:'start',behavior:'smooth'});
+}
+
+// ══════════════════════════════════════════════
+//  FLOWCHART
+// ══════════════════════════════════════════════
+function buildFlowchart(container, fns){
+  if(!fns.length){ container.innerHTML='<div class="flow-title">Logic Flow</div><div style="color:var(--muted);font-size:.85rem;">No JS functions found.</div>'; return; }
+  const NW=160, NH=42, COLS=Math.min(fns.length,5), ROWS=Math.ceil(fns.length/COLS);
+  const CX=200, CY=110, MX=60, MY=60;
+  const W=MX*2+COLS*CX, H=MY*2+ROWS*CY+80;
+
+  const pos={};
+  fns.forEach((fn,i)=>{ pos[fn.name]={x:MX+(i%COLS)*CX,y:MY+80+Math.floor(i/COLS)*CY}; });
+
+  let svg=`<svg class="flowchart" width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ar" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto">
+    <path d="M0,0 L0,6 L7,3 z" fill="#58a6ff"/></marker></defs>`;
+
+  // START
+  const sx=W/2, sy=40;
+  svg+=`<ellipse cx="${sx}" cy="${sy}" rx="38" ry="16" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="${sx}" y="${sy+5}" text-anchor="middle" fill="#58a6ff" font-size="11" font-family="monospace">START</text>`;
+
+  // Nodes
+  fns.forEach((fn,i)=>{
+    const {x,y}=pos[fn.name];
+    const cx=x+NW/2;
+    svg+=`<rect x="${x}" y="${y}" width="${NW}" height="${NH}" rx="6" fill="${i%2?'#1c2128':'#161b22'}" stroke="#30363d" stroke-width="1.5"/>`;
+    const label=fn.name.length>18?fn.name.slice(0,16)+'…':fn.name;
+    svg+=`<text x="${cx}" y="${y+16}" text-anchor="middle" fill="#e3b341" font-size="11.5" font-family="'Fira Code',monospace" font-weight="600">${esc(label)}()</text>`;
+    const desc=(fn.annotation.match(/— (.+?)\./)||['',''])[1].replace(/<[^>]+>/g,'').slice(0,28);
+    svg+=`<text x="${cx}" y="${y+32}" text-anchor="middle" fill="#7d8590" font-size="9.5" font-family="sans-serif">${esc(desc)}</text>`;
+    // start → node
+    svg+=`<line x1="${sx}" y1="${sy+16}" x2="${cx}" y2="${y}" stroke="#21262d" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#ar)"/>`;
+    // call arrows
+    fn.calls.forEach(callee=>{
+      const t=pos[callee]; if(!t) return;
+      const x1=x+NW,y1=y+NH/2,x2=t.x,y2=t.y+NH/2;
+      svg+=`<path d="M${x1},${y1} C${x1+40},${y1} ${x2-40},${y2} ${x2},${y2}" fill="none" stroke="#58a6ff" stroke-width="1.2" marker-end="url(#ar)" opacity=".5"/>`;
+      svg+=`<text x="${(x1+x2)/2}" y="${(y1+y2)/2-8}" text-anchor="middle" class="fc-label">calls</text>`;
+    });
+  });
+  svg+='</svg>';
+
+  // Function cards below
+  let cards='<div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:24px;">';
+  fns.forEach(fn=>{
+    cards+=`<div style="background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px 14px;min-width:200px;max-width:300px;">
+      <div style="font-size:.65rem;color:var(--muted);text-transform:uppercase;margin-bottom:3px;">Function</div>
+      <div style="font-family:monospace;font-size:.85rem;color:#e3b341;font-weight:700;margin-bottom:4px;">${esc(fn.name)}()</div>
+      <div style="font-size:.75rem;color:#adbac7;line-height:1.5;">${fn.annotation}</div>
+    </div>`;
+  });
+  cards+='</div>';
+  container.innerHTML=`<div class="flow-title">🔀 Logic Flow — ${fns.length} Function${fns.length!==1?'s':''}</div><div class="flow-svg-wrap">${svg}</div>${cards}`;
+}
+
+// ══════════════════════════════════════════════
+//  VIEW SWITCHER
+// ══════════════════════════════════════════════
+function switchView(v){
+  ['annotated','flow'].forEach(x=>document.getElementById('btn-'+x).classList.toggle('active',x===v));
+  const cp=document.getElementById('codePanel');
+  const ap=document.getElementById('annPanel');
+  const fp=document.getElementById('flowPanel');
+  const ws=document.getElementById('workspace');
+  if(!cp) return;
+  if(v==='annotated'){
+    cp.style.display=''; ap.style.display='';
+    fp.classList.remove('visible');
+    ws.style.gridTemplateColumns='1fr 340px';
+  } else {
+    cp.style.display='none'; ap.style.display='none';
+    fp.classList.add('visible');
+    ws.style.gridTemplateColumns='1fr';
+  }
+}
+</script>
+</body>
+</html>
