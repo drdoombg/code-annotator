@@ -71,10 +71,11 @@
   .leg-dot{width:9px;height:9px;border-radius:2px;}
 
   /* ── WORKSPACE ── */
-  .workspace{display:grid;grid-template-columns:1fr 340px;min-height:calc(100vh - 90px);}
+  /* single shared scroll region so the two columns move together and stay aligned */
+  .workspace{display:grid;grid-template-columns:1fr 340px;height:calc(100vh - 90px);overflow-y:auto;align-items:start;}
 
   /* ── CODE PANEL ── */
-  .code-panel{overflow-x:auto;overflow-y:auto;border-right:1px solid var(--border);}
+  .code-panel{overflow-x:auto;overflow-y:visible;border-right:1px solid var(--border);}
   .code-table{width:100%;border-collapse:collapse;
     font-family:'Fira Code','Cascadia Code','Consolas',monospace;font-size:12.5px;}
   .code-table td{vertical-align:top;padding:0;}
@@ -129,7 +130,24 @@
   .tok-plain    { color:var(--c-plain);    }
 
   /* ── ANNOTATION PANEL ── */
-  .ann-panel{background:var(--panel);overflow-y:auto;padding:14px 14px;}
+  .ann-panel{background:var(--panel);overflow-y:visible;padding:14px 14px;position:relative;}
+
+  /* ── TOKEN INSPECTOR POPOVER (select any word in the code) ── */
+  .tok-popover{
+    position:absolute;left:8px;right:8px;z-index:50;
+    background:#0d1117;border:1px solid var(--accent);border-radius:8px;
+    padding:10px 26px 10px 12px;box-shadow:0 6px 22px rgba(0,0,0,.5);
+  }
+  .tok-popover::before{
+    content:'';position:absolute;left:-7px;top:16px;width:12px;height:12px;
+    background:#0d1117;border-left:1px solid var(--accent);border-bottom:1px solid var(--accent);
+    transform:rotate(45deg);
+  }
+  .tok-pop-close{position:absolute;top:7px;right:10px;cursor:pointer;color:var(--muted);font-size:.75rem;line-height:1;}
+  .tok-pop-close:hover{color:var(--text);}
+  .tok-pop-word{font-family:monospace;font-size:.9rem;font-weight:700;color:var(--text);margin:2px 0 5px;}
+  .tok-pop-body{font-size:.77rem;color:#adbac7;line-height:1.6;}
+  .tok-pop-body em{color:var(--accent);font-style:normal;font-weight:600;}
   .ann-title{font-size:.68rem;text-transform:uppercase;letter-spacing:.08em;
     color:var(--muted);margin-bottom:10px;font-weight:600;}
 
@@ -829,7 +847,10 @@ function renderAnnotated(){
     card.onclick=()=>scrollToBlock(bi);
     ap.appendChild(card);
 
-    // Code rows
+    // Code rows — grouped in a <tbody> per block so we can align it to its annotation card
+    const tbody=document.createElement('tbody');
+    tbody.id=`code-blk-${bi}`;
+    tbody.dataset.block=bi;
     blk.linesData.forEach((ld, li)=>{
       const tr=document.createElement('tr');
       tr.className=`blk-row-${blk.paletteId}${li===0?' blk-first':''}`;
@@ -838,24 +859,171 @@ function renderAnnotated(){
       const lineHtml=tokeniseLine(ld.raw, ld.mode);
       tr.innerHTML=`<td class="ln">${ld.lno}</td><td class="blabel-cell"></td><td class="lc">${lineHtml}</td>`;
 
-      // hover syncs card
-      tr.addEventListener('mouseenter',()=>activateCard(bi));
-      table.appendChild(tr);
+      // hover only highlights — does NOT auto-scroll
+      tr.addEventListener('mouseenter',()=>activateCard(bi,false));
+      tbody.appendChild(tr);
     });
+    table.appendChild(tbody);
   });
 
   buildFlowchart(fp, globalFns);
+  alignBlocks(globalBlocks.length);
+  initTokenInspector();
 }
 
-function activateCard(bi){
+// ══════════════════════════════════════════════
+//  TOKEN INSPECTOR — select any word in the code and get
+//  a detail popover pinned level with that exact line.
+// ══════════════════════════════════════════════
+let _tokDismissHandler=null;
+function initTokenInspector(){
+  const cp=document.getElementById('codePanel');
+  const ap=document.getElementById('annPanel');
+  if(!cp||!ap) return;
+  cp.addEventListener('mouseup', ()=> setTimeout(()=>handleTokenSelection(cp,ap), 0));
+  if(_tokDismissHandler) document.removeEventListener('mousedown', _tokDismissHandler);
+  _tokDismissHandler=e=>{
+    if(!cp.contains(e.target) && !e.target.closest?.('#tokPopover')) hideTokenPopover();
+  };
+  document.addEventListener('mousedown', _tokDismissHandler);
+}
+
+function hideTokenPopover(){
+  const pop=document.getElementById('tokPopover');
+  if(pop) pop.remove();
+}
+
+function handleTokenSelection(cp, ap){
+  const sel=window.getSelection();
+  const text=sel && sel.toString().trim();
+  if(!text || text.length>40 || /\s/.test(text)){ return; }
+  if(sel.rangeCount===0) return;
+  const range=sel.getRangeAt(0);
+  const rect=range.getBoundingClientRect();
+  if(!rect || (rect.width===0 && rect.height===0)) return;
+
+  let node=sel.anchorNode;
+  let el=node && (node.nodeType===3 ? node.parentElement : node);
+  let tokClass='';
+  while(el && el!==cp){
+    const m=(el.className||'').toString().match(/tok-(\w+)/);
+    if(m){ tokClass=m[1]; break; }
+    el=el.parentElement;
+  }
+
+  const info=explainToken(text, tokClass);
+  if(!info){ hideTokenPopover(); return; }
+  showTokenPopover(info, rect, ap);
+}
+
+function explainToken(raw, tokClass){
+  const word=raw.trim().replace(/^[<>\/="';,.:(){}\[\]]+|[<>\/="';,.:(){}\[\]]+$/g,'');
+  if(!word) return null;
+  const wl=word.toLowerCase();
+  const lookups=[
+    { dict:ANN_LIB.htmlTags,   cat:'HTML Tag',        accent:'#ff7b72' },
+    { dict:ANN_LIB.attrs,      cat:'HTML Attribute',  accent:'#ffa657' },
+    { dict:ANN_LIB.cssProps,   cat:'CSS Property',    accent:'#79c0ff' },
+    { dict:ANN_LIB.jsKeywords, cat:'JS Keyword',       accent:'#ff7b72' },
+    { dict:ANN_LIB.domMethods, cat:'JS / DOM Method',  accent:'#56d364' },
+  ];
+  for(const {dict,cat,accent} of lookups){
+    if(dict[word]!==undefined) return {word,cat,accent,desc:dict[word]};
+  }
+  for(const {dict,cat,accent} of lookups){
+    const key=Object.keys(dict).find(k=>k.toLowerCase()===wl);
+    if(key) return {word:key,cat,accent,desc:dict[key]};
+  }
+  // hyphenated CSS/JS names can't be fully double-click-selected — match by prefix
+  for(const {dict,cat,accent} of lookups){
+    const key=Object.keys(dict).find(k=>k.toLowerCase().startsWith(wl+'-'));
+    if(key) return {word:key,cat,accent,desc:dict[key],approx:true};
+  }
+  const generic={
+    tag:     ['HTML Tag','An HTML element name.'],
+    attr:    ['HTML Attribute','A property set on this element.'],
+    value:   ['Attribute Value','The value assigned to an attribute.'],
+    selector:['CSS Selector','Targets which elements this rule applies to.'],
+    prop:    ['CSS Property','A style property being set.'],
+    csval:   ['CSS Value','The value(s) applied on this declaration.'],
+    keyword: ['JS Keyword','A reserved JavaScript keyword.'],
+    func:    ['Function Call','Calls a function — look above for where it\'s defined.'],
+    string:  ['String','A literal text value.'],
+    number:  ['Number','A numeric literal.'],
+    operator:['Operator','Performs a comparison, assignment, or calculation.'],
+    dom:     ['DOM / Built-in','A built-in browser or JS method.'],
+    event:   ['Event Name','The type of user interaction being listened for.'],
+    punct:   ['Punctuation','Structural syntax character.'],
+  };
+  if(tokClass && generic[tokClass]) return {word,cat:generic[tokClass][0],accent:'#8b949e',desc:generic[tokClass][1]};
+  return null;
+}
+
+function showTokenPopover(info, rowRect, ap){
+  hideTokenPopover();
+  const apRect=ap.getBoundingClientRect();
+  const relTop=Math.max(0, rowRect.top - apRect.top - 6);
+
+  const pop=document.createElement('div');
+  pop.id='tokPopover';
+  pop.className='tok-popover';
+  pop.style.top=relTop+'px';
+  pop.style.borderColor=info.accent;
+  pop.innerHTML=`
+    <div class="tok-pop-close" onclick="hideTokenPopover()">✕</div>
+    <div class="ann-chip" style="background:${info.accent}22;color:${info.accent}">${esc(info.cat)}</div>
+    <div class="tok-pop-word">${esc(info.word)}</div>
+    <div class="tok-pop-body">${info.desc}${info.approx?'<br><span style="color:var(--muted);font-size:.68rem;">(closest match to your selection)</span>':''}</div>
+  `;
+  ap.appendChild(pop);
+}
+
+function activateCard(bi, scroll){
   document.querySelectorAll('.ann-block-card').forEach(c=>c.classList.remove('active-card'));
   const card=document.getElementById(`ann-blk-${bi}`);
-  if(card){ card.classList.add('active-card'); card.scrollIntoView({block:'nearest',behavior:'smooth'}); }
+  if(card){ card.classList.add('active-card'); if(scroll) card.scrollIntoView({block:'nearest',behavior:'smooth'}); }
 }
 
 function scrollToBlock(bi){
-  const firstRow=document.querySelector(`tr[data-block="${bi}"]`);
-  if(firstRow) firstRow.scrollIntoView({block:'start',behavior:'smooth'});
+  activateCard(bi, false);
+  const tbody=document.getElementById(`code-blk-${bi}`);
+  if(tbody) tbody.scrollIntoView({block:'start',behavior:'smooth'});
+}
+
+// ══════════════════════════════════════════════
+//  ALIGN CODE BLOCKS WITH THEIR ANNOTATION CARDS
+//  Inserts spacers so block N always starts at the same
+//  vertical position on both sides of the workspace.
+// ══════════════════════════════════════════════
+function alignBlocks(count){
+  // clear any previous spacers from an earlier render
+  document.querySelectorAll('.blk-spacer-row, .blk-spacer-card').forEach(el=>el.remove());
+
+  const starts=[];
+  for(let bi=0; bi<count; bi++){
+    const tbody=document.getElementById(`code-blk-${bi}`);
+    const card=document.getElementById(`ann-blk-${bi}`);
+    if(!tbody||!card) continue;
+    starts.push({ bi, tbody, card, codeTop: tbody.getBoundingClientRect().top, annTop: card.getBoundingClientRect().top });
+  }
+
+  let corrCode=0, corrAnn=0;
+  starts.forEach(({bi,tbody,card,codeTop,annTop})=>{
+    const diff = (annTop+corrAnn) - (codeTop+corrCode);
+    if(diff > 1){
+      const spacerRow=document.createElement('tr');
+      spacerRow.className='blk-spacer-row';
+      spacerRow.innerHTML=`<td colspan="3" style="height:${diff}px;padding:0;border:0;"></td>`;
+      tbody.insertBefore(spacerRow, tbody.firstChild);
+      corrCode += diff;
+    } else if(diff < -1){
+      const spacer=document.createElement('div');
+      spacer.className='blk-spacer-card';
+      spacer.style.height=(-diff)+'px';
+      card.parentNode.insertBefore(spacer, card);
+      corrAnn += -diff;
+    }
+  });
 }
 
 // ══════════════════════════════════════════════
